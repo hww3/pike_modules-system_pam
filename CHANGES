@@ -1,0 +1,15 @@
+Version History
+
+Version 1.0 
+
+This is the first release of the System.PAM module. Functionality for the following 
+PAM operations are provided in this release:
+
+start(), end(), authenticate(), chauthtok(), open_session(), close_session(), 
+strerror(), setcreds(), get_item(), and set_item()
+
+Version 1.2
+
+Added testsuite.in so that the module will install automatically with monger.
+
+Added configure tests for pam header files on linux and darwin (macos x).

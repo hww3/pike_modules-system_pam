@@ -1,0 +1,16 @@
+AC_INIT(pam_config.h.in)
+AC_CONFIG_HEADER(pam_config.h)
+
+AC_MODULE_INIT()
+
+AC_C_CONST
+
+AC_CHECK_HEADERS(shadow.h dirent.h sys/quota.h mntent.h security/pam_appl.h security/pam_modules.h pam/pam_appl.h pam/pam_modules.h)
+AC_CHECK_LIB(pam, pam_start)
+AC_CHECK_FUNCS(pam_authenticate pam_chauthtok pam_end pam_start)
+
+AC_FUNC_ALLOCA
+
+
+AC_OUTPUT(Makefile)
+

@@ -1,0 +1,639 @@
+/* 
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
+ * $Id: pam.cmod,v 1.1.1.1 2004-09-01 15:12:44 hww3 Exp $
+ */
+
+/*
+ * File licensing and authorship information block.
+ *
+ * Version: MPL 1.1/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Initial Developer of the Original Code is
+ *
+ * Bill Welliver <hww3@riverweb.com>
+ *
+ * Portions created by the Initial Developer are Copyright (C) Bill Welliver
+ * All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of the LGPL, and not to allow others to use your version
+ * of this file under the terms of the MPL, indicate your decision by
+ * deleting the provisions above and replace them with the notice
+ * and other provisions required by the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL or the LGPL.
+ *
+ * Significant Contributors to this file are:
+ *
+ * Marek Habersack <grendel@caudium.net>
+ *
+ */
+
+/*! @module System
+ */
+
+/*! @module PAM
+ */
+
+/*! @class PAM
+ */
+
+#define _GNU_SOURCE
+
+#include "pam_config.h"
+#include "util.h"
+
+#ifdef HAVE_PAM
+#endif /* HAVE_PAM */
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+
+#ifdef HAVE_SECURITY_PAM_APPL_H
+#include <security/pam_appl.h>
+#endif
+
+#ifdef HAVE_SECURITY_PAM_MODULES_H
+#include <security/pam_modules.h>
+#endif
+
+#ifdef HAVE_PAM_PAM_APPL_H
+#include <pam/pam_appl.h>
+#endif
+
+#ifdef HAVE_PAM_PAM_MODULES_H
+#include <pam/pam_modules.h>
+#endif
+
+PIKECLASS PAM 
+{
+
+typedef struct
+{
+    struct pike_string *appname;
+    struct svalue *pike_conv;
+    struct svalue *data;
+    pam_handle_t *pamh;
+    struct pam_conv   conv;
+    int started;
+} PAM_OBJECT_DATA;
+
+CVAR PAM_OBJECT_DATA   *object_data;
+PIKEVAR function pike_conv;
+
+static int
+pike_glue_conv(int num_msg, struct pam_message **msg,
+                 struct pam_response **resp, void *data)
+{
+    int ne=0;
+    int i,j=0;
+    struct array *arr;
+    struct array *ret_msg;
+    struct pam_response *reply = NULL;
+    void * user = NULL;
+
+#ifdef DEBUG
+   printf("pike_glue_conv started\n");
+#endif
+
+    if(num_msg <= 0 || num_msg > PAM_MAX_NUM_MSG)
+      return (PAM_CONV_ERR);
+
+    if((reply = calloc(num_msg, sizeof(struct pam_response))) == NULL)
+         return (PAM_BUF_ERR);
+
+    if(pam_get_item(THIS->object_data->pamh, PAM_USER, &user)!= PAM_SUCCESS)
+    {
+      free(reply);
+      return (PAM_BUF_ERR);
+    }
+
+    /* push the conversation function onto the stack */
+
+
+    push_svalue(&THIS->pike_conv);
+    push_text(user);
+    push_svalue(THIS->object_data->data);
+
+#ifdef DEBUG
+    printf("pushed the callback function onto the stack.\n");
+#endif
+
+    /* loop through each message element to generate an array of arrays */
+
+    for(i=0; i<num_msg; i++)
+    {
+      struct array *a;
+     
+      push_int(msg[i]->msg_style);
+      push_text(msg[i]->msg);
+      a=aggregate_array(2);
+      push_array(a);
+    }
+
+    arr = aggregate_array(num_msg);
+    push_array(arr);
+
+#ifdef DEBUG
+printf("calling the conversation callback\n");
+#endif
+
+    apply_svalue(Pike_sp-4, 3);
+    if(Pike_sp[-1].type!=T_ARRAY)
+    {
+      pop_stack();
+      pop_stack();
+      PIKE_ERROR("pam_conversation","Bad return value. expected array(array)\n",
+	Pike_sp, 2);
+    }
+
+    if(Pike_sp[-1].u.array->size != num_msg)
+    {
+      pop_stack();
+      pop_stack();
+      PIKE_ERROR("pam_conversation","Bad return value. Incorrect number of elements in array.\n",
+	Pike_sp, 2);
+    }
+
+    /* ok, we have an array with the correct number of elements. */
+    arr=Pike_sp[-1].u.array;
+
+    /* look at each element of the returned array. */
+    for(j=0; j<num_msg; j++)
+    {
+      char * buf=NULL;
+      /* set the defaults */
+      reply[j].resp=NULL;
+      reply[j].resp_retcode=0;
+
+      /* have we returned a "no response provided/needed"? */
+      if(ITEM(arr)[j].type == T_INT)
+      {
+        continue;
+      }
+
+      if(ITEM(arr)[j].type != T_ARRAY)
+      {
+        pop_stack();
+        pop_stack();
+        PIKE_ERROR("pam_conversation","Bad return value. Expected array:array(string|int)\n",
+	  Pike_sp, 2);
+      }
+
+      ret_msg=ITEM(arr)[j].u.array;
+
+      /* ok, we have the jth result message. let's make sure element 0 is 
+	a string and 1 is an integer. */
+     if(ret_msg->size !=2)
+      {
+        pop_stack();
+        pop_stack();
+        PIKE_ERROR("pam_conversation","Bad return value. Expected 2 elements in return message.\n",
+	  Pike_sp, 2);
+      }
+
+      if(!(ITEM(ret_msg)[0].type == T_STRING && ITEM(ret_msg)[1].type == T_INT))
+      {
+        pop_stack();
+        pop_stack();
+        PIKE_ERROR("pam_conversation",
+          "Bad return value. Element 0 should be a string, element 1 an integer.\n",
+	  Pike_sp, 2);        
+      }
+
+      /* if we've gotten this far, the return value should be good. */
+       buf=strdup(ITEM(ret_msg)[0].u.string->str);
+       if(buf==NULL)
+         goto fail;
+       reply[j].resp=buf;
+       reply[j].resp_retcode=1;
+    } 
+
+     /* have we received a return value? */
+
+    if(reply) *resp = reply;
+
+#ifdef DEBUG
+    printf("good return from conversation\n");
+#endif
+
+    pop_stack();
+    pop_stack();
+
+    return PAM_SUCCESS;
+
+    fail:
+#ifdef DEBUG
+      printf("error allocating data.\n");
+#endif
+      while(i)
+        free(resp[--i]);
+        free(*resp);
+        *resp=NULL;
+        pop_stack();
+        pop_stack();
+        return (PAM_CONV_ERR);
+}
+
+/*! @decl int start(string user, function conversation)
+ *!   Starts a PAM session
+ *!
+ *!  @param user
+ *!    user the session will be working with
+ *!  @param conversation
+ *!    the conversation function. see @[System.PAM.default_conversation]
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int start(string user, function conversation)
+{
+  int ret = 0;
+  struct pam_conv convs;
+  char * a;
+  char * u;
+
+  if(THIS->object_data->pamh != NULL)
+  {
+    Pike_error("PAM already started.\n");
+  }
+
+  convs.conv = pike_glue_conv;
+  convs.appdata_ptr = &THIS->object_data;
+
+  a=strdup(THIS->object_data->appname->str);
+  u=strdup(user->str);
+
+  assign_svalue(&(THIS->pike_conv), conversation);
+
+  ret=pam_start(a, u, &convs, &THIS->object_data->pamh);
+
+  if(a) free(a); 
+  if(u) free(u);
+
+  RETURN (ret);
+}
+
+/*! @decl int end(int status)
+ *!   Ends a PAM session
+ *!
+ *!  @param status
+ *!    status sent to system PAM modules, used in their cleanup.
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int end(int status)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.end: PAM not started.\n");
+  }
+   
+  ret=pam_end(THIS->object_data->pamh, status);
+
+  THIS->object_data->pamh = NULL;
+
+  RETURN(ret);
+}
+
+/*! @decl string strerror(int errnum)
+ *!   Converts a PAM error number to a string description.
+ *!
+ *!  @param errnum
+ *!    an error number returned by a PAM function.
+ *!
+ *!  @returns
+ *!    a string describing the error
+ *!
+ */
+PIKEFUN string strerror(int errnum)
+{
+  const char *t = NULL;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.end: PAM not started.\n");
+  }
+ 
+  t = pam_strerror(THIS->object_data->pamh, (int)(errnum));
+
+  pop_stack();
+
+  if(t!=NULL)
+    push_text(t);
+  
+  return;
+}
+
+/*! @decl int authenticate(mixed data, int flags)
+ *!   Attempts to authenticate the user specified in @[start]
+ *!
+ *!  @param data
+ *!    a set of data to be sent to the conversation function. this may be used by the conversation
+ *!    function to provide a conversation response.
+ *!
+ *!  @param flags
+ *!
+ *!  @returns 
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int authenticate(mixed data, int flags)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.authenticate: PAM not started\n");
+  }
+
+  THIS->object_data->data = data;
+
+  ret = pam_authenticate(THIS->object_data->pamh, flags);
+
+  RETURN (ret);
+}
+
+/*! @decl int chauthtok(mixed data, int flags)
+ *!   Attempts to change the authentication token of the user specified in @[start]
+ *!
+ *!  @param data
+ *!    a set of data to be sent to the conversation function. this may be used by the conversation
+ *!    function to provide a conversation response.
+ *!
+ *!  @param flags
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int chauthtok(mixed data, int flags)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.chauthtok: PAM not started\n");
+  }
+
+  THIS->object_data->data = data;
+
+  ret = pam_chauthtok(THIS->object_data->pamh, flags);
+
+  RETURN (ret);
+}
+
+
+/*! @decl int open_session(int flags)
+ *!   Starts a session for the user specified in @[start]
+ *!
+ *!  @param flags
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int open_session(int flags)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.open_session: PAM not started\n");
+  }
+
+  ret = pam_open_session(THIS->object_data->pamh, flags);
+
+  RETURN (ret);
+}
+
+
+/*! @decl int close_session(int flags)
+ *!   Closes the session for the user specified in @[start]
+ *!
+ *!  @param flags
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int close_session(int flags)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.close_session: PAM not started\n");
+  }
+
+  ret = pam_close_session(THIS->object_data->pamh, flags);
+
+  RETURN (ret);
+}
+
+/*! @decl int setcred(int flags)
+ *!   Sets authentication credentials for the user specified in @[start]
+ *!
+ *!  @param flags
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int setcred(int flags)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.setcred: PAM not started\n");
+  }
+
+  ret = pam_setcred(THIS->object_data->pamh, flags);
+
+  RETURN (ret);
+}
+
+/*! @decl int set_item(int item_type, string|function item)
+ *!   Sets the value of a PAM parameter
+ *!
+ *!  @param item_type
+ *!
+ *!  @param item
+ *!    The value of the item to be set. If PAM_CONV is specified, item should be 
+ *!    a valid conversation function.
+ *!
+ *!  @returns
+ *!    @[System.PAM.PAM_SUCCESS] on success
+ *!
+ */
+PIKEFUN int set_item(int item_type, string|function item)
+{
+  int ret = 0;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.set_item: PAM not started\n");
+  }
+
+  /* we short circuit attempts to change the conversation function. */
+  if(item_type == PAM_CONV)
+  {
+    if(item->type != T_FUNCTION)
+    {
+      Pike_error("System.PAM.set_item: PAM_CONV must be set with a function.\n"); 
+    }
+
+    assign_svalue(&(THIS->pike_conv), item);
+  }
+
+  else
+  {
+    /* pam_set_item() should copy the item to its internal storage area, */ 
+    /*   so we shouldn't need to strdup() it */
+    ret = pam_set_item(THIS->object_data->pamh, item_type, item->u.string->str);
+  }
+
+  RETURN (ret);
+}
+
+/*! @decl string|function|int get_item(int item_type)
+ *!   Gets the value of a PAM parameter
+ *!
+ *!  @param item_type
+ *!
+ *!  @returns
+ *!    the item as a string or function, or a PAM error code if a failure has occurred.
+ *!
+ */
+PIKEFUN int|string|function get_item(int item_type)
+{
+  int ret = 0;
+  void * item = NULL;
+
+  if(THIS->object_data->pamh == NULL)
+  {
+    Pike_error("System.PAM.get_item: PAM not started\n");
+  }
+
+  /* we short circuit attempts to change the conversation function. */
+  if(item_type == PAM_CONV)
+  {
+    pop_n_elems(args);
+    push_svalue(&THIS->pike_conv);
+  }
+
+  else
+  {
+    /* pam_set_item() should copy the item to its internal storage area, */ 
+    /*   so we shouldn't need to strdup() it */
+    ret = pam_get_item(THIS->object_data->pamh, (int)(item_type), &item);
+
+    pop_n_elems(args);
+
+    if(ret != PAM_SUCCESS)
+      push_int(ret); 
+    else if(item !=  NULL)
+      push_text((char *)item);
+  }
+
+  return;
+}
+
+/****
+ *
+ * Low-level PAM interface
+ *
+ ****/
+
+/*! @decl void create(string appname)
+ *!   Creates a new PAM object
+ *!
+ *!  @param appname
+ *!    sets the application name that the PAM module will identify itself as.
+ *!
+ */
+PIKEFUN void create(string appname)
+{
+  THIS->object_data->appname = make_shared_string(appname->str);
+  pop_n_elems(args);
+}
+
+
+INIT
+{
+    PAM_OBJECT_DATA * dta = 
+	(PAM_OBJECT_DATA*)malloc(sizeof(PAM_OBJECT_DATA));
+    if (!dta)
+        Pike_error("init_pam: Out of memory!\n");
+
+    THIS->object_data = dta;
+
+    THIS->object_data->appname = NULL;
+    THIS->object_data->pike_conv = NULL;
+    THIS->object_data->pamh = NULL;
+}
+
+EXIT 
+{
+  if(THIS->object_data)
+  {
+    if(THIS->object_data->pamh != NULL)
+      pam_end(THIS->object_data->pamh, 0);
+
+    free_string(THIS->object_data->appname);
+    free(THIS->object_data);
+  }
+}
+
+}
+
+/*! @endclass
+ */
+
+/*! @endmodule
+ */
+
+/*! @endmodule
+ */
+
+

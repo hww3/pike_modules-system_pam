@@ -1,0 +1,14 @@
+# $Id: Makefile.in,v 1.1.1.1 2004-09-01 15:12:44 hww3 Exp $
+@make_variables@
+VPATH=@srcdir@:@srcdir@/../..:../..
+OBJS=pam.o
+MODDIR=System.pmod/
+MODNAME=PAM
+MODULE_PMOD_IN=module.pmod.in
+AUTODOC_SRC_IN=pam.cmod
+MODULE_LDFLAGS=@LDFLAGS@ @LIBS@
+
+CONFIG_HEADERS=@CONFIG_HEADERS@
+
+@dynamic_module_makefile@
+@dependencies@
