@@ -1,6 +1,7 @@
 #pike __REAL_VERSION__
 
-constant __version="1.1";
+constant __version="1.3";
+constant __author="Bill Welliver <hww3@riverweb.com>";
 
 inherit System.___PAM;
 
@@ -21,7 +22,7 @@ inherit System.___PAM;
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- * $Id: module.pmod,v 1.1.1.1 2004-09-01 15:12:44 hww3 Exp $
+ * $Id: module.pmod,v 1.2 2004-09-01 20:51:21 hww3 Exp $
  */
 
 /*
