@@ -13,7 +13,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- * $Id: pam.cmod,v 1.1.1.1 2004-09-01 15:12:44 hww3 Exp $
+ * $Id: pam.cmod,v 1.2 2006-12-05 23:48:08 hww3 Exp $
  */
 
 /*
@@ -66,6 +66,7 @@
 /*! @class PAM
  */
 
+//#define DEBUG 1
 #define _GNU_SOURCE
 
 #include "pam_config.h"
@@ -105,8 +106,6 @@ PIKECLASS PAM
 typedef struct
 {
     struct pike_string *appname;
-    struct svalue *pike_conv;
-    struct svalue *data;
     pam_handle_t *pamh;
     struct pam_conv   conv;
     int started;
@@ -121,6 +120,7 @@ pike_glue_conv(int num_msg, struct pam_message **msg,
 {
     int ne=0;
     int i,j=0;
+    struct svalue * d;
     struct array *arr;
     struct array *ret_msg;
     struct pam_response *reply = NULL;
@@ -144,11 +144,15 @@ pike_glue_conv(int num_msg, struct pam_message **msg,
 
     /* push the conversation function onto the stack */
 
-
+   
     push_svalue(&THIS->pike_conv);
     push_text(user);
-    push_svalue(THIS->object_data->data);
 
+    d = (struct svalue *) data;
+
+    if(d)
+      push_svalue(d);
+    else push_int(-1);
 #ifdef DEBUG
     printf("pushed the callback function onto the stack.\n");
 #endif
@@ -173,6 +177,12 @@ printf("calling the conversation callback\n");
 #endif
 
     apply_svalue(Pike_sp-4, 3);
+
+#ifdef DEBUG
+printf("finished calling the conversation callback\n");
+#endif
+
+
     if(Pike_sp[-1].type!=T_ARRAY)
     {
       pop_stack();
@@ -284,24 +294,24 @@ printf("calling the conversation callback\n");
 PIKEFUN int start(string user, function conversation)
 {
   int ret = 0;
-  struct pam_conv convs;
   char * a;
   char * u;
+  struct pam_conv * conv;
 
   if(THIS->object_data->pamh != NULL)
   {
     Pike_error("PAM already started.\n");
   }
 
-  convs.conv = pike_glue_conv;
-  convs.appdata_ptr = &THIS->object_data;
+  THIS->object_data->conv.conv = pike_glue_conv;
+  THIS->object_data->conv.appdata_ptr = NULL;
 
   a=strdup(THIS->object_data->appname->str);
   u=strdup(user->str);
 
   assign_svalue(&(THIS->pike_conv), conversation);
 
-  ret=pam_start(a, u, &convs, &THIS->object_data->pamh);
+  ret=pam_start(a, u, &THIS->object_data->conv, &THIS->object_data->pamh);
 
   if(a) free(a); 
   if(u) free(u);
@@ -386,14 +396,21 @@ PIKEFUN int authenticate(mixed data, int flags)
     Pike_error("System.PAM.authenticate: PAM not started\n");
   }
 
-  THIS->object_data->data = data;
+if(!data) printf("AAAAA: no data!\n");
+
+  THIS->object_data->conv.appdata_ptr = data;
+
+  ret = pam_set_item(THIS->object_data->pamh, PAM_CONV, 
+           &THIS->object_data->conv);
 
   ret = pam_authenticate(THIS->object_data->pamh, flags);
+
+  free_svalue(data);
 
   RETURN (ret);
 }
 
-/*! @decl int chauthtok(mixed data, int flags)
+/*! @decl int chauthtok(mapping data, int flags)
  *!   Attempts to change the authentication token of the user specified in @[start]
  *!
  *!  @param data
@@ -406,7 +423,7 @@ PIKEFUN int authenticate(mixed data, int flags)
  *!    @[System.PAM.PAM_SUCCESS] on success
  *!
  */
-PIKEFUN int chauthtok(mixed data, int flags)
+PIKEFUN int chauthtok(mapping data, int flags)
 {
   int ret = 0;
 
@@ -415,7 +432,8 @@ PIKEFUN int chauthtok(mixed data, int flags)
     Pike_error("System.PAM.chauthtok: PAM not started\n");
   }
 
-  THIS->object_data->data = data;
+  
+  THIS->object_data->conv.appdata_ptr = &data;
 
   ret = pam_chauthtok(THIS->object_data->pamh, flags);
 
@@ -609,7 +627,6 @@ INIT
     THIS->object_data = dta;
 
     THIS->object_data->appname = NULL;
-    THIS->object_data->pike_conv = NULL;
     THIS->object_data->pamh = NULL;
 }
 
