@@ -4,7 +4,6 @@ VPATH=@srcdir@:@srcdir@/../..:../..
 OBJS=pam.o
 MODDIR=System.pmod/
 MODNAME=PAM
-MODULE_PMOD_IN=module.pmod.in
 AUTODOC_SRC_IN=pam.cmod
 MODULE_LDFLAGS=@LDFLAGS@ @LIBS@
 
