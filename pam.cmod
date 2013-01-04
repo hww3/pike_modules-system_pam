@@ -99,19 +99,15 @@
 #ifdef HAVE_PAM_PAM_MODULES_H
 #include <pam/pam_modules.h>
 #endif
+DECLARATIONS
 
 PIKECLASS PAM 
 {
 
-typedef struct
-{
-    struct pike_string *appname;
-    pam_handle_t *pamh;
-    struct pam_conv   conv;
-    int started;
-} PAM_OBJECT_DATA;
-
-CVAR PAM_OBJECT_DATA   *object_data;
+CVAR    struct pike_string *appname;
+CVAR    pam_handle_t *pamh;
+CVAR    struct pam_conv   conv;
+CVAR    int started;
 PIKEVAR function pike_conv;
 
 static int
@@ -136,7 +132,7 @@ pike_glue_conv(int num_msg, struct pam_message **msg,
     if((reply = calloc(num_msg, sizeof(struct pam_response))) == NULL)
          return (PAM_BUF_ERR);
 
-    if(pam_get_item(THIS->object_data->pamh, PAM_USER, &user)!= PAM_SUCCESS)
+    if(pam_get_item(THIS->pamh, PAM_USER, &user)!= PAM_SUCCESS)
     {
       free(reply);
       return (PAM_BUF_ERR);
@@ -292,20 +288,20 @@ PIKEFUN int start(string user, function conversation)
   char * u;
   struct pam_conv * conv;
 
-  if(THIS->object_data->pamh != NULL)
+  if(THIS->pamh != NULL)
   {
     Pike_error("PAM already started.\n");
   }
 
-  THIS->object_data->conv.conv = pike_glue_conv;
-  THIS->object_data->conv.appdata_ptr = NULL;
+  THIS->conv.conv = pike_glue_conv;
+  THIS->conv.appdata_ptr = NULL;
 
-  a=strdup(THIS->object_data->appname->str);
+  a=strdup(THIS->appname->str);
   u=strdup(user->str);
 
   assign_svalue(&(THIS->pike_conv), conversation);
 
-  ret=pam_start(a, u, &THIS->object_data->conv, &THIS->object_data->pamh);
+  ret=pam_start(a, u, &THIS->conv, &THIS->pamh);
 
   if(a) free(a); 
   if(u) free(u);
@@ -327,17 +323,17 @@ PIKEFUN int end(int status)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.end: PAM not started.\n");
   }
    
-  ret=pam_end(THIS->object_data->pamh, status);
+  ret=pam_end(THIS->pamh, status);
 
   free_svalue(&THIS->pike_conv);
 //  THIS->pike_conv = NULL;
 
-  THIS->object_data->pamh = NULL;
+  THIS->pamh = NULL;
 
   RETURN(ret);
 }
@@ -356,12 +352,12 @@ PIKEFUN string strerror(int errnum)
 {
   const char *t = NULL;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.end: PAM not started.\n");
   }
  
-  t = pam_strerror(THIS->object_data->pamh, (int)(errnum));
+  t = pam_strerror(THIS->pamh, (int)(errnum));
 
   pop_stack();
 
@@ -388,23 +384,22 @@ PIKEFUN int authenticate(mixed data, int flags)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.authenticate: PAM not started\n");
   }
 
 if(!data) printf("AAAAA: no data!\n");
 
-  THIS->object_data->conv.appdata_ptr = data;
+  THIS->conv.appdata_ptr = data;
 
-  ret = pam_set_item(THIS->object_data->pamh, PAM_CONV, 
-           &THIS->object_data->conv);
+  ret = pam_set_item(THIS->pamh, PAM_CONV, 
+           &THIS->conv);
 
-  ret = pam_authenticate(THIS->object_data->pamh, flags);
-
+  ret = pam_authenticate(THIS->pamh, flags);
+printf("result: %d\n", ret);
   pop_n_elems(args);
-
-  RETURN (ret);
+  push_int(ret);
 }
 
 /*! @decl int chauthtok(mapping data, int flags)
@@ -424,17 +419,17 @@ PIKEFUN int chauthtok(mapping data, int flags)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.chauthtok: PAM not started\n");
   }
 
   
-  THIS->object_data->conv.appdata_ptr = &data;
+  THIS->conv.appdata_ptr = &data;
 
-  ret = pam_chauthtok(THIS->object_data->pamh, flags);
-
-  RETURN (ret);
+  ret = pam_chauthtok(THIS->pamh, flags);
+  pop_n_elems(args);
+  push_int(ret);
 }
 
 
@@ -451,14 +446,14 @@ PIKEFUN int open_session(int flags)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.open_session: PAM not started\n");
   }
 
-  ret = pam_open_session(THIS->object_data->pamh, flags);
-
-  RETURN (ret);
+  ret = pam_open_session(THIS->pamh, flags);
+  pop_n_elems(args);
+  push_int(ret);
 }
 
 
@@ -475,12 +470,12 @@ PIKEFUN int close_session(int flags)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.close_session: PAM not started\n");
   }
 
-  ret = pam_close_session(THIS->object_data->pamh, flags);
+  ret = pam_close_session(THIS->pamh, flags);
 
   RETURN (ret);
 }
@@ -498,12 +493,12 @@ PIKEFUN int setcred(int flags)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.setcred: PAM not started\n");
   }
 
-  ret = pam_setcred(THIS->object_data->pamh, flags);
+  ret = pam_setcred(THIS->pamh, flags);
 
   RETURN (ret);
 }
@@ -525,7 +520,7 @@ PIKEFUN int set_item(int item_type, string|function item)
 {
   int ret = 0;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.set_item: PAM not started\n");
   }
@@ -545,7 +540,7 @@ PIKEFUN int set_item(int item_type, string|function item)
   {
     /* pam_set_item() should copy the item to its internal storage area, */ 
     /*   so we shouldn't need to strdup() it */
-    ret = pam_set_item(THIS->object_data->pamh, item_type, item->u.string->str);
+    ret = pam_set_item(THIS->pamh, item_type, item->u.string->str);
   }
 
   RETURN (ret);
@@ -565,7 +560,7 @@ PIKEFUN int|string|function get_item(int item_type)
   int ret = 0;
   void * item = NULL;
 
-  if(THIS->object_data->pamh == NULL)
+  if(THIS->pamh == NULL)
   {
     Pike_error("System.PAM.get_item: PAM not started\n");
   }
@@ -581,7 +576,7 @@ PIKEFUN int|string|function get_item(int item_type)
   {
     /* pam_set_item() should copy the item to its internal storage area, */ 
     /*   so we shouldn't need to strdup() it */
-    ret = pam_get_item(THIS->object_data->pamh, (int)(item_type), &item);
+    ret = pam_get_item(THIS->pamh, (int)(item_type), &item);
 
     pop_n_elems(args);
 
@@ -609,34 +604,26 @@ PIKEFUN int|string|function get_item(int item_type)
  */
 PIKEFUN void create(string appname)
 {
-  THIS->object_data->appname = make_shared_string(appname->str);
+  THIS->appname = make_shared_string(appname->str);
   pop_n_elems(args);
 }
 
 
-INIT
+PIKE_MODULE_INIT
 {
-    PAM_OBJECT_DATA * dta = 
-	(PAM_OBJECT_DATA*)malloc(sizeof(PAM_OBJECT_DATA));
-    if (!dta)
-        Pike_error("init_pam: Out of memory!\n");
-
-    THIS->object_data = dta;
-
-    THIS->object_data->appname = NULL;
-    THIS->object_data->pamh = NULL;
+  INIT;
+    THIS->appname = NULL;
+    THIS->pamh = NULL;
 }
 
-EXIT 
+PIKE_MODULE_EXIT 
 {
-  if(THIS->object_data)
-  {
-    if(THIS->object_data->pamh != NULL)
-      pam_end(THIS->object_data->pamh, 0);
+    if(THIS->pamh != NULL)
+      pam_end(THIS->pamh, 0);
 
-    free_string(THIS->object_data->appname);
-    free(THIS->object_data);
-  }
+    free_string(THIS->appname);
+
+    EXIT;
 }
 
 }
